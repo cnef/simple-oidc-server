@@ -20,6 +20,7 @@ var NowFunc = time.Now
 type MockOIDC struct {
 	ClientID     string
 	ClientSecret string
+	Endpoint     string
 
 	AccessTTL  time.Duration
 	RefreshTTL time.Duration
@@ -114,6 +115,7 @@ func (m *MockOIDC) Start(ln net.Listener, cfg *tls.Config) error {
 	handler.Handle(UserinfoEndpoint, m.chainMiddleware(m.Userinfo))
 	handler.Handle(JWKSEndpoint, m.chainMiddleware(m.JWKS))
 	handler.Handle(DiscoveryEndpoint, m.chainMiddleware(m.Discovery))
+	handler.Handle(LoginEndpint, m.chainMiddleware(m.Login))
 
 	m.Server = &http.Server{
 		Addr:      ln.Addr().String(),
@@ -210,7 +212,7 @@ func (m *MockOIDC) Issuer() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + IssuerBase
+	return m.endpoint() + IssuerBase
 }
 
 // DiscoveryEndpoint returns the full `/.well-known/openid-configuration` URL
@@ -218,7 +220,14 @@ func (m *MockOIDC) DiscoveryEndpoint() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + DiscoveryEndpoint
+	return m.endpoint() + DiscoveryEndpoint
+}
+
+func (m *MockOIDC) endpoint() string {
+	if len(m.Endpoint) > 0 {
+		return m.Endpoint
+	}
+	return m.Addr()
 }
 
 // AuthorizationEndpoint returns the OIDC `authorization_endpoint`
@@ -226,7 +235,7 @@ func (m *MockOIDC) AuthorizationEndpoint() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + AuthorizationEndpoint
+	return m.endpoint() + AuthorizationEndpoint
 }
 
 // TokenEndpoint returns the OIDC `token_endpoint`
@@ -234,7 +243,7 @@ func (m *MockOIDC) TokenEndpoint() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + TokenEndpoint
+	return m.endpoint() + TokenEndpoint
 }
 
 // UserinfoEndpoint returns the OIDC `userinfo_endpoint`
@@ -242,7 +251,7 @@ func (m *MockOIDC) UserinfoEndpoint() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + UserinfoEndpoint
+	return m.endpoint() + UserinfoEndpoint
 }
 
 // JWKSEndpoint returns the OIDC `jwks_uri`
@@ -250,7 +259,7 @@ func (m *MockOIDC) JWKSEndpoint() string {
 	if m.Server == nil {
 		return ""
 	}
-	return m.Addr() + JWKSEndpoint
+	return m.endpoint() + JWKSEndpoint
 }
 
 func (m *MockOIDC) chainMiddleware(endpoint func(http.ResponseWriter, *http.Request)) http.Handler {

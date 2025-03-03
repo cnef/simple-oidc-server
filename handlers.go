@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ const (
 	UserinfoEndpoint      = "/oidc/userinfo"
 	JWKSEndpoint          = "/oidc/.well-known/jwks.json"
 	DiscoveryEndpoint     = "/oidc/.well-known/openid-configuration"
+	LoginEndpint          = "/oidc/login"
 
 	InvalidRequest       = "invalid_request"
 	InvalidClient        = "invalid_client"
@@ -51,6 +53,7 @@ var (
 		"email",
 		"groups",
 		"profile",
+		"roles",
 	}
 	TokenEndpointAuthMethodsSupported = []string{
 		"client_secret_basic",
@@ -64,10 +67,55 @@ var (
 		"phone_number",
 		"address",
 		"groups",
+		"roles",
 		"iss",
 		"aud",
 	}
 )
+
+// Login handles the login request and creates a session upon successful login.
+func (m *MockOIDC) Login(rw http.ResponseWriter, req *http.Request) {
+	err := req.ParseForm()
+	if err != nil {
+		internalServerError(rw, err.Error())
+		return
+	}
+
+	username := req.Form.Get("username")
+	password := req.Form.Get("password")
+
+	for _, user := range m.UserQueue.Queue {
+		if user.Validate(username, password) {
+
+			session, err := m.SessionStore.NewSession(
+				req.Form.Get("scope"),
+				req.Form.Get("nonce"),
+				user,
+				req.Form.Get("code_challenge"),
+				req.Form.Get("code_challenge_method"),
+			)
+			if err != nil {
+				internalServerError(rw, err.Error())
+				return
+			}
+
+			redirectURI, err := url.Parse(req.Form.Get("redirect_uri"))
+			if err != nil {
+				internalServerError(rw, err.Error())
+				return
+			}
+			params, _ := url.ParseQuery(redirectURI.RawQuery)
+			params.Set("code", session.SessionID)
+			params.Set("state", req.Form.Get("state"))
+			redirectURI.RawQuery = params.Encode()
+
+			http.Redirect(rw, req, redirectURI.String(), http.StatusFound)
+			return
+		}
+	}
+
+	http.Error(rw, "Invalid credentials", http.StatusUnauthorized)
+}
 
 // Authorize implements the `authorization_endpoint` in the OIDC flow.
 // It is the initial request that "authenticates" a user in the OAuth2
@@ -102,29 +150,29 @@ func (m *MockOIDC) Authorize(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	session, err := m.SessionStore.NewSession(
+	// login page
+	loginHTML := `
+        <form action="/oidc/login" method="post">
+		<input type="hidden" name="scope" value="%s">
+		<input type="hidden" name="nonce" value="%s">
+		<input type="hidden" name="state" value="%s">
+		<input type="hidden" name="code_challenge" value="%s">
+		<input type="hidden" name="code_challenge_method" value="%s">
+		<input type="hidden" name="redirect_uri" value="%s">
+            Email: <input type="text" name="username"><br>
+            Password: <input type="password" name="password"><br>
+            <input type="submit" value="Login">
+        </form>
+    `
+	rw.Header().Set("Content-Type", "text/html;charset=UTF-8")
+	rw.Write([]byte(fmt.Sprintf(loginHTML,
 		req.Form.Get("scope"),
 		req.Form.Get("nonce"),
-		m.UserQueue.Pop(),
+		req.Form.Get("state"),
 		req.Form.Get("code_challenge"),
 		req.Form.Get("code_challenge_method"),
-	)
-	if err != nil {
-		internalServerError(rw, err.Error())
-		return
-	}
+		req.Form.Get("redirect_uri"))))
 
-	redirectURI, err := url.Parse(req.Form.Get("redirect_uri"))
-	if err != nil {
-		internalServerError(rw, err.Error())
-		return
-	}
-	params, _ := url.ParseQuery(redirectURI.RawQuery)
-	params.Set("code", session.SessionID)
-	params.Set("state", req.Form.Get("state"))
-	redirectURI.RawQuery = params.Encode()
-
-	http.Redirect(rw, req, redirectURI.String(), http.StatusFound)
 }
 
 type tokenResponse struct {
@@ -198,18 +246,23 @@ func (m *MockOIDC) Token(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (m *MockOIDC) validateTokenParams(rw http.ResponseWriter, req *http.Request) bool {
-	if !assertPresence([]string{"client_id", "client_secret", "grant_type"}, rw, req) {
+	if !assertPresence([]string{"grant_type"}, rw, req) {
 		return false
 	}
 
-	equal := assertEqual("client_id", m.ClientID,
-		InvalidClient, "Invalid client id", rw, req)
-	if !equal {
+	clientID, clientSecret, ok := req.BasicAuth()
+	if !ok {
+		clientID = req.Form.Get("client_id")
+		clientSecret = req.Form.Get("client_secret")
+	}
+
+	if len(clientID) == 0 {
+		errorResponse(rw, InvalidRequest, "Invalid client id", http.StatusBadRequest)
 		return false
 	}
-	equal = assertEqual("client_secret", m.ClientSecret,
-		InvalidClient, "Invalid client secret", rw, req)
-	if !equal {
+
+	if clientID != m.ClientID || clientSecret != m.ClientSecret {
+		errorResponse(rw, InvalidClient, "Invalid client id or secret", http.StatusUnauthorized)
 		return false
 	}
 
@@ -295,7 +348,7 @@ func (m *MockOIDC) setTokens(tr *tokenResponse, s *Session, grantType string) er
 	if err != nil {
 		return err
 	}
-	if len(s.Scopes) > 0 && s.Scopes[0] == openidScope {
+	if len(s.Scopes) > 0 && slices.Contains(s.Scopes, openidScope) {
 		tr.IDToken, err = s.IDToken(m.Config(), m.Keypair, m.Now())
 		if err != nil {
 			return err
