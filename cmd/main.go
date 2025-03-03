@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -21,6 +22,7 @@ var (
 	endpoint     string
 	email        string
 	password     string
+	port         int
 )
 
 func init() {
@@ -29,6 +31,7 @@ func init() {
 	flag.StringVar(&endpoint, "endpoint", "", "Server endpoint URL")
 	flag.StringVar(&email, "email", "admin@admin.com", "Admin email")
 	flag.StringVar(&password, "password", "password", "Admin Password")
+	flag.IntVar(&port, "port", 8080, "Port to listen on")
 }
 
 func main() {
@@ -92,7 +95,7 @@ func main() {
 	m.AddMiddleware(middleware)
 
 	// Create the net.Listener on the exact IP:Port you want
-	ln, _ := net.Listen("tcp", "0.0.0.0:8080")
+	ln, _ := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
 	// tlsConfig can be nil if you want HTTP
 	err := m.Start(ln, nil)
 	if err != nil {
