@@ -95,9 +95,12 @@ func main() {
 	m.AddMiddleware(middleware)
 
 	// Create the net.Listener on the exact IP:Port you want
-	ln, _ := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	ln, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
+	if err != nil {
+		log.Fatal(err)
+	}
 	// tlsConfig can be nil if you want HTTP
-	err := m.Start(ln, nil)
+	err = m.Start(ln, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

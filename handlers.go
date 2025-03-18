@@ -38,6 +38,7 @@ var (
 	GrantTypesSupported = []string{
 		"authorization_code",
 		"refresh_token",
+		"password",
 	}
 	ResponseTypesSupported = []string{
 		"code",
@@ -219,6 +220,11 @@ func (m *MockOIDC) Token(rw http.ResponseWriter, req *http.Request) {
 		if session, valid = m.validateRefreshGrant(rw, req); !valid {
 			return
 		}
+
+	case "password":
+		if session, valid = m.validatePasswordGrant(rw, req); !valid {
+			return
+		}
 	default:
 		errorResponse(rw, InvalidRequest,
 			fmt.Sprintf("Invalid grant type: %s", grantType), http.StatusBadRequest)
@@ -289,6 +295,50 @@ func (m *MockOIDC) validateCodeGrant(rw http.ResponseWriter, req *http.Request) 
 	session.Granted = true
 
 	return session, true
+}
+
+func (m *MockOIDC) validatePasswordGrant(rw http.ResponseWriter, req *http.Request) (*Session, bool) {
+	if !assertPresence([]string{"username", "password", "scope"}, rw, req) {
+		return nil, false
+	}
+
+	equal := assertEqual("grant_type", "password",
+		UnsupportedGrantType, "Invalid grant type", rw, req)
+	if !equal {
+		return nil, false
+	}
+
+	username := req.Form.Get("username")
+	password := req.Form.Get("password")
+	scope := req.Form.Get("scope")
+
+	fnValieateUser := func() *User {
+		for _, user := range m.UserQueue.Queue {
+			if user.Validate(username, password) {
+				return &user
+			}
+		}
+		return nil
+	}
+
+	if user := fnValieateUser(); user != nil {
+		session, err := m.SessionStore.NewSession(
+			scope,
+			"",
+			*user,
+			"",
+			"",
+		)
+		if err != nil {
+			internalServerError(rw, err.Error())
+			return nil, false
+		}
+		session.Granted = true
+		return session, true
+	}
+
+	errorResponse(rw, InvalidGrant, "Invalid username or password", http.StatusUnauthorized)
+	return nil, false
 }
 
 func (m *MockOIDC) validateCodeChallenge(rw http.ResponseWriter, req *http.Request, session *Session) bool {
